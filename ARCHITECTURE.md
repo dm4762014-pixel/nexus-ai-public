@@ -1,0 +1,44 @@
+# NEXUS AI architecture
+
+## Runtime
+
+One Uvicorn process serves compiled React/TypeScript/Vite assets and a same-origin FastAPI API. One daemon task thread claims the oldest queued SQLite task. There is no Redis, container cluster, paid AI dependency or Node development server. An OS file lease prevents two application instances from sharing the same worker database.
+
+`nexus/config.py` defines bounded local settings. `nexus/app.py` owns authenticated APIs, uploads and downloads. `nexus/store.py` uses short SQLite transactions with WAL and owner predicates. `nexus/security.py` handles password KDFs, hashed session tokens and bounded request counters. `nexus/manage.py` provides interactive local account management.
+
+## Execution
+
+Understand → deterministic plan → optional validated Ollama tool call for unclassified requests → validate → sequential tools → checkpoint → parser/hash verification → persist result. Common file/research requests avoid an unnecessary planning model call. A single provider lock serializes inference. `qwen3:1.7b` starts with 2048 context tokens, 900 maximum output tokens, batch 64, four CPU threads and a 30-second model keep-alive. Threads and batch are configurable within bounded ranges. Ollama responses stream with a total inference deadline, token progress and early termination after a complete structured JSON object. The model is explicitly unloaded before document rendering and Chromium, and after tasks under 512 MiB available RAM. Browser launch refuses under 384 MiB available RAM. No other installed model is selected automatically.
+
+Task states: queued, planning, running, awaiting_approval, completed, failed, cancelled. SQLite stores original request, user, immutable execution plan for approved navigation, visible steps, events, sources, claims, artifacts, errors and timestamps. Current UI uses polling rather than WebSockets. A task may explicitly reference a completed parent through `parent_task_id`; the new task stores an owner-checked snapshot of up to three ancestors and their source metadata at enqueue time. Other history and sibling branches are excluded. Existing tables require no migration.
+
+Cancellation wins terminal transitions and resolves pending approvals. It is cooperative at tool boundaries, web read chunks, model-lock waits and streamed model frames. Waiting for model loading or the next frame can still take up to the configured model timeout. A restart fails interrupted or approval-waiting tasks, cancels stale approvals and never automatically replays their tools. Previously queued tasks have executed no tools and may start after restart. Explicit retry creates a new task/workspace.
+
+## Tools
+
+- `context.py`: captures at most 2,400 prior prompt/answer characters, prioritizing the newest answer while reserving excerpts for older turns. Short recent answers leave more room for the original report. Raw source bodies, artifact paths, approvals and execution plans are excluded from context metadata. Conversation text remains untrusted input to a tools-free completion, with a 300-token follow-up output budget. Source reference numbers remain stable within the chain; inherited pages are not refetched or claimed newly verified. Follow-ups support auto/chat/document modes only, bypass model tool planning and never replay previous web/code/browser work. The UI makes context opt-in and exposes the parent link, context removal and truncation notice.
+- `research.py`: DDGS search/provider fallback, query reduction, relevant primary-publisher ranking, deduplication before the retrieval budget and bounded extraction. Matching owner/prompt history can enrich candidate URLs from the previous seven days; selected pages are fetched again and history use disclosed. Raw evidence stays internal.
+- `synthesis.py`: cybersecurity-agent comparisons select up to three concrete application groups, omit generic definitions/offensive-agent passages when selecting defensive workflows, and ask for a compact schema-constrained paraphrase (220 output tokens). Python maps application IDs to the supplied passages and citations, adds source coverage/preview/analyst qualifications and exports comparison rows to Excel. Other topics retain the legacy quote-validated synthesis path. Invalid output still falls back explicitly to abbreviated excerpts. Provenance checks do not establish factual accuracy or entailment, and publisher descriptions do not establish current deployment status.
+- `network.py`: public HTTPS only; validates all DNS addresses, connects to a numeric socket, verifies TLS using the original hostname, revalidates redirects, bounds wire/decoded content and closes owned sockets at timeout. Windows OS DNS lookup timing remains resolver-controlled. Search providers are third-party libraries with their own network clients.
+- `files.py`: real parsers/writers for seven document formats, system-font PDF Unicode without copying fonts, spreadsheet import injection escaping, bounded Office/PDF upload parsing. Formula calculation in native Excel is not claimed.
+- `coding.py`: structured source JSON or labeled scaffold fallback, contained paths, static AST/JSON analysis, dependency listing, source and ZIP reopening. No host subprocess execution.
+- `browser.py`: optional approved list of1–3 public pages → sequential pinned fetches → escaped semantic blocks → one temporary offline JavaScript-disabled Chromium context → locator readings, PNGs and a verified JSON journey log. No source scripts/resources, personal profiles, cookies or live forms.
+- `connectors.py`: permission-oriented interface only. No external account is connected and no send/publish/delete/purchase tool is registered.
+
+## Storage and quotas
+
+`data/nexus.sqlite3` holds identity/task metadata. `data/<user UUID>/<task UUID>/` holds artifacts and generated project sources; `data/<user UUID>/uploads/` holds validated uploads. Random IDs supplement owner authorization; they never replace it. Artifact downloads recheck containment, size and SHA256. Existing legacy `outputs/` is neither imported nor exposed through production routes.
+
+Defaults: 1 AI task, 8 pending tasks globally, 40 new tasks/user/day (UTC day), 12 steps, 300-second task boundary deadline, 120-second model request timeout, 5MB upload, 15MB task files, 250MB owner storage. File writes share a lock and reserve output headroom. Generated files are retained; cleanup is manual and never automatic. SQLite metadata and OS/model/parser memory are not hard sandbox quotas.
+
+Schedules are SQLite intervals (minimum 15 minutes), checked by the existing worker. They skip missed intervals after sleep rather than flooding the queue. Sleep/offline/closed application means no execution. A crash after advancing a schedule but before enqueue can skip that occurrence; no exactly-once distributed scheduler guarantee is made.
+
+## Future migration
+
+Separate API and worker only when hardware/users justify it. Replace the process lease with transactional job leases, move SQLite to managed SQL and artifacts to owner-scoped object storage, put tools behind OS/container/network limits, and keep Ollama private. Public beta is blocked until external security review and hardened parsing/execution isolation. Cloud AI providers remain optional extensions of the provider contract.
+
+General-topic synthesis uses Python-owned bounded evidence groups and strict structured short summaries, with deterministic citations/coverage and explicit excerpt fallback. It does not establish paraphrase entailment. Presentation overviews derive2–3 cited report sections into native editable shapes/connectors; lines indicate membership only. Full findings, speaker notes and reference links remain in the deck.
+
+General paraphrases receive one complete exact source sentence per publisher, without the user question in the model input. Fixed IDs prevent cross-source selection drift; named query actors absent from that sentence, incomplete sentences, numeric claims and copied text are rejected. These controls limit common failures but do not prove factual entailment. Invalid synthesis records a bounded diagnostic and an explicit excerpt fallback.
+
+Fuller research retains the same UI and model: up to three small batches sample distinct atomic source sentences (maximum nine findings), with per-finding optional checks and single-batch brief requests. Optional failures preserve accepted findings; required main coverage, cancellation and structural validation remain strict. Metrics aggregate actual calls. Additional pilot questions are editorial review prompts, not source claims. Detailed retrieval errors go to activity events; file bodies receive a plain unavailable-source notice. Standalone documents may use800output tokens; upload/follow-up budgets remain bounded as before.

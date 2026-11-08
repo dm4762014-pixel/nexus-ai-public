@@ -1,0 +1,9 @@
+# TEMPLATE ONLY. Do not enable before the public readiness review.
+# Requires a domain you control, working TLS and explicit hosting authorization.
+YOUR_REVIEWED_BETA_DOMAIN {
+    request_body {
+        max_size 6MB
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy 127.0.0.1:8000
+}
