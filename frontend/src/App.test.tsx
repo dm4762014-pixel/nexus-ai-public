@@ -81,6 +81,25 @@ describe('NEXUS workspace', () => {
     expect(screen.getByLabelText('Task mode')).toBeInTheDocument()
   })
 
+  it('opens and focuses the exact upload citation while keeping web citations and unknown text', async () => {
+    const first = { reference: 'U1', filename: 'Pilot.txt', heading: 'Budget', summary: 'The budget is set.', quote: 'The budget is set.', line_start: 1, line_end: 3, mode: 'summary' }
+    const second = { ...first, reference: 'U2', heading: 'Handover', quote: 'Final handover is Friday.', line_start: 40, line_end: 42 }
+    const saved = { ...task, answer: 'Budget [U1]. Handover [U2]. Unmatched [U9]. Web [1].', upload_findings: [first, second], sources: [{ number: 1, title: 'Example', url: 'https://example.com' }] }
+    taskList = [saved]; specific['/api/tasks/task-one'] = saved
+    render(<App />); const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: task.prompt }))
+    const panel = screen.getByText('Check uploaded evidence (2 findings)').closest('details')
+    expect(panel).not.toHaveAttribute('open')
+    await user.click(screen.getByRole('button', { name: 'Uploaded evidence U2: Pilot.txt' }))
+    expect(panel).toHaveAttribute('open')
+    const passage = screen.getByRole('group', { name: '[U2] Pilot.txt' })
+    expect(passage).toHaveFocus()
+    expect(passage).toHaveTextContent('Final handover is Friday.')
+    expect(screen.getByRole('link', { name: 'Source 1: Example' })).toHaveAttribute('href', 'https://example.com')
+    expect(screen.getByText(/Unmatched \[U9\]/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Uploaded evidence U9/ })).toBeNull()
+  })
+
   it('cancels a running task and presents retry after cancellation', async () => {
     taskList = [{ ...task, status: 'running', answer: '', completed_at: undefined, artifacts: [] }]
     render(<App />); const user = userEvent.setup()

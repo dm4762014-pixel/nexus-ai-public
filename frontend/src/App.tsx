@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ChangeEvent } from 'react'
 import {
   ArrowDownToLine, ArrowRight, ArrowUp, Blocks, Check, CheckCheck, ChevronRight,
@@ -8,7 +8,7 @@ import {
   Terminal, Trash2, X, Zap,
 } from 'lucide-react'
 import { api, formatSize, safeDownload, safeSource, setCsrf } from './api'
-import type { Approval, Artifact, Capabilities, Page, Schedule, ScheduleRun, Source, Task, Upload, User } from './types'
+import type { Approval, Artifact, Capabilities, Page, Schedule, ScheduleRun, Source, Task, Upload, UploadFinding, User } from './types'
 
 const ACTIVE = ['queued', 'planning', 'running', 'awaiting_approval']
 const NAV = [
@@ -70,8 +70,18 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
   return <a className="artifact-card" href={safeDownload(artifact.url)} download><span className={`file-icon ${ext === 'XLSX' ? 'green' : ext === 'PDF' ? 'red' : 'blue'}`}><File size={21} /><small>{ext}</small></span><span className="artifact-name"><strong>{artifact.name}</strong><small>{formatSize(artifact.size || 0)} {artifact.verified ? '· Structure verified' : '· Verification pending'}</small></span><ArrowDownToLine size={17} /></a>
 }
 
-function Answer({ text, sources }: { text: string; sources: Source[] }) {
-  return <div className="answer-text">{text.split(/(\[\d+\])/g).map((part, index) => {
+function Answer({ text, sources, findings, passageId, showPassage }: {
+  text: string; sources: Source[]; findings: UploadFinding[];
+  passageId: (reference: string) => string; showPassage: (reference: string) => void;
+}) {
+  return <div className="answer-text">{text.split(/(\[(?:\d+|U\d+)\])/g).map((part, index) => {
+    const uploaded = /^\[(U\d+)\]$/.exec(part)
+    if (uploaded) {
+      const finding = findings.find(item => item.reference === uploaded[1])
+      return finding ? <button type="button" className="inline-citation upload-citation" key={index}
+        aria-label={`Uploaded evidence ${finding.reference}: ${finding.filename}`}
+        aria-controls={passageId(finding.reference)} onClick={() => showPassage(finding.reference)}>{part}</button> : part
+    }
     const citation = /^\[(\d+)\]$/.exec(part)
     const source = citation && sources.find(item => item.number === Number(citation[1]))
     const href = source && safeSource(source.url)
@@ -81,13 +91,34 @@ function Answer({ text, sources }: { text: string; sources: Source[] }) {
 
 function Result({ task, onCancel, onRetry, onFollowup, onOpenParent, busy }: { task: Task; onCancel: () => void; onRetry: () => void; onFollowup: () => void; onOpenParent: () => void; busy: boolean }) {
   const active = ACTIVE.includes(task.status)
+  const findings = task.upload_findings ?? []
+  const evidenceId = useId()
+  const evidenceRef = useRef<HTMLDetailsElement>(null)
+  const passageId = (reference: string) => `${evidenceId}-${reference}`
+  function showPassage(reference: string) {
+    const panel = evidenceRef.current
+    const passage = document.getElementById(passageId(reference))
+    if (!panel || !passage || !panel.contains(passage)) return
+    panel.open = true
+    passage.focus({ preventScroll: true })
+    passage.scrollIntoView?.({ block: 'center' })
+  }
   return <div className="conversation">
     {task.context && <div className="context-note"><MessageSquare size={15} /><span>Uses {task.context.turns.length} prior {task.context.turns.length === 1 ? 'result' : 'results'}{task.context.truncated ? ' · Context shortened' : ''}</span><button className="subtle" onClick={onOpenParent}>View previous task</button></div>}
     <div className="user-message"><span className="message-label">YOU <span>{timeLabel(task.created_at)}</span></span><p>{task.prompt}</p></div>
     <div className="assistant-message"><div className="assistant-heading"><span className="mini-brand"><Sparkles size={16} /></span><strong>NEXUS AI</strong><span className={`status-badge ${task.status}`}>{active && <LoaderCircle size={11} className="spin" />}{task.status.replaceAll('_', ' ')}</span></div>
       {task.plan.length > 0 && <div className="inline-plan"><div className="plan-title"><Blocks size={15} /> Execution plan <small>{task.plan.filter(x => x.status === 'completed').length} / {task.plan.length}</small></div>{task.plan.map((step, index) => <div className={`plan-step ${step.status}`} key={`${step.tool}-${index}`}>{step.status === 'completed' ? <CircleCheck size={15} /> : step.status === 'running' ? <LoaderCircle size={15} className="spin" /> : step.status === 'failed' ? <X size={15} /> : <Circle size={15} />}<span>{step.title || step.tool}</span><small>{step.status?.replaceAll('_', ' ')}</small></div>)}</div>}
-      {task.answer && <Answer text={task.answer} sources={task.sources} />}
-      {!!task.upload_findings?.length && <details className="upload-evidence"><summary>Check uploaded evidence ({task.upload_findings.length} {task.upload_findings.length === 1 ? 'finding' : 'findings'})</summary><p>Exact passages from the extracted text. Line numbers refer to extraction order, which can differ from the original page layout. AI summaries still need review.</p>{task.upload_findings.map(finding => <div key={finding.reference}><strong>[{finding.reference}] {finding.filename}</strong><small>Extracted lines {finding.line_start}–{finding.line_end}{finding.mode === 'extract' ? ' · Exact extract fallback' : ''}</small><blockquote>{finding.quote}</blockquote></div>)}</details>}
+      {task.answer && <Answer text={task.answer} sources={task.sources} findings={findings} passageId={passageId} showPassage={showPassage} />}
+      {!!findings.length && <details ref={evidenceRef} className="upload-evidence">
+        <summary>Check uploaded evidence ({findings.length} {findings.length === 1 ? 'finding' : 'findings'})</summary>
+        <p>Exact passages from the extracted text. Line numbers refer to extraction order, which can differ from the original page layout. AI summaries still need review.</p>
+        {findings.map(finding => <div className="upload-passage" id={passageId(finding.reference)} key={finding.reference}
+          tabIndex={-1} role="group" aria-labelledby={`${passageId(finding.reference)}-label`}>
+          <strong id={`${passageId(finding.reference)}-label`}>[{finding.reference}] {finding.filename}</strong>
+          <small>Extracted lines {finding.line_start}–{finding.line_end}{finding.mode === 'extract' ? ' · Exact extract fallback' : ''}</small>
+          <blockquote>{finding.quote}</blockquote>
+        </div>)}
+      </details>}
       {!!task.browser_pages?.length && <section className="browser-readings" aria-label="Browser page previews"><div className="section-line"><h3>Read-only page previews</h3><span>{task.browser_pages.length} pages</span></div><p>Offline readings of the approved public pages. Scripts, forms and submissions are disabled.</p>{task.browser_pages.map(page => {
         const artifact = task.artifacts.find(item => item.name === page.screenshot)
         const preview = artifact && safeDownload(artifact.url)
@@ -318,7 +349,7 @@ function App() {
       {pendingApprovals.length > 0 && <section className="approvals" aria-label="Approval requests">{pendingApprovals.map(approval => <div className="approval-card" key={approval.id}><ShieldCheck size={20} /><div><strong>Approval required: {approval.action.replaceAll('_', ' ')}</strong><p>{approval.detail}</p></div><button className="subtle" disabled={busy} onClick={() => decide(approval.id, false)}>Decline</button><button className="primary" disabled={busy} onClick={() => decide(approval.id, true)}>Approve</button></div>)}</section>}
       <div className={`content-layout ${selected && workspacePage ? 'has-details' : ''}`}><main className={`main-content ${selected && workspacePage ? 'task-content' : ''}`}>
         {workspacePage && <>
-          {selected ? <Result task={selected} onCancel={() => taskAction('cancel')} onRetry={() => taskAction('retry')} onFollowup={continueTask} onOpenParent={() => selected.context && openTask(selected.context.parent_task_id)} busy={busy} /> : <div className="welcome"><div className="welcome-symbol"><Sparkles size={27} strokeWidth={1.4} /></div><span className="eyebrow">{title.eyebrow}</span><h1>{title.title}</h1><p className="welcome-subtitle">{title.subtitle}</p></div>}
+          {selected ? <Result key={selected.id} task={selected} onCancel={() => taskAction('cancel')} onRetry={() => taskAction('retry')} onFollowup={continueTask} onOpenParent={() => selected.context && openTask(selected.context.parent_task_id)} busy={busy} /> : <div className="welcome"><div className="welcome-symbol"><Sparkles size={27} strokeWidth={1.4} /></div><span className="eyebrow">{title.eyebrow}</span><h1>{title.title}</h1><p className="welcome-subtitle">{title.subtitle}</p></div>}
           {(page === 'browser' || mode === 'browser') && !capabilities?.browser_enabled && <div className="capability-note"><ShieldCheck size={17} /><span>Browser screenshots are disabled in this configuration. Public page retrieval is available through research.</span></div>}
           <form className={`composer ${selected ? 'followup-composer' : ''}`} onSubmit={submit}>{followup && <div className="followup-context" role="status"><MessageSquare size={16} /><div><strong>Following up on: {followup.prompt}</strong><span>Uses up to 3 prior results. Ask a question or request a document; sources are not refreshed.</span></div><button type="button" className="icon-button" aria-label="Remove prior context" onClick={() => { setFollowup(null); setMode('auto') }}><X size={15} /></button></div>}<label htmlFor="task-prompt" className="sr-only">Your task</label><textarea id="task-prompt" ref={inputRef} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder={followup ? 'What would you like to do with the previous result?' : selected ? 'Start another task…' : 'Describe what you want to get done…'} rows={selected ? 2 : 3} maxLength={4000} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit() } }} />{attached.length > 0 && <div className="attachments">{attached.map(file => <span key={file.id}><File size={13} />{file.name}<button type="button" aria-label={`Remove ${file.name}`} onClick={() => setAttached(items => items.filter(item => item.id !== file.id))}><X size={13} /></button></span>)}</div>}<div className="composer-toolbar"><div><input className="sr-only" tabIndex={-1} ref={uploadRef} type="file" accept=".pdf,.docx,.xlsx,.pptx,.txt,.csv,.json" onChange={upload} /><button className="attach-button" type="button" onClick={() => uploadRef.current?.click()} disabled={uploading || attached.length >= 3} title="Attach a document">{uploading ? <LoaderCircle size={16} className="spin" /> : <Paperclip size={16} />}<span>Attach</span></button><span className="toolbar-divider" /><label className="mode-select"><Sparkles size={14} /><select aria-label="Task mode" value={mode} onChange={e => setMode(e.target.value)}>{followup ? <><option value="chat">Follow-up</option><option value="document">Document</option></> : <><option value="auto">Auto tools</option><option value="research">Research</option><option value="document">Document</option><option value="code">Code</option><option value="browser">Browser</option><option value="chat">Chat</option></>}</select></label></div><div><span className="keyboard-hint">Ctrl + Enter</span><button className="send-button" type="submit" aria-label="Start task" disabled={!prompt.trim() || busy || uploading}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} />}</button></div></div></form>
           {!selected && <><div className="composer-footnote"><LockKeyhole size={11} /> Runs on your machine <span>·</span> Files verified before delivery <span>·</span> One task at a time</div>{page === 'workspace' || page === 'research' ? <section className="suggestions"><div className="section-line"><h2>A place to start</h2><span>Make it your own</span></div><div className="template-grid">{TEMPLATES.map(template => <button className="template-card" key={template.title} onClick={() => useTemplate(template.prompt)}><span className={`template-icon ${template.color}`}><template.icon size={19} /></span><ArrowRight size={15} className="template-arrow" /><strong>{template.title}</strong><p>{template.description}</p><small>{template.tags}</small></button>)}</div></section> : <div className="workspace-prompt"><button className="subtle" onClick={() => useTemplate(page === 'code' ? TEMPLATES[2].prompt : 'Read https://example.com and https://www.python.org/about/ and capture the public page information.')}><Plus size={14} />{page === 'code' ? 'Try a Python task tracker' : 'Try a two-page read'}</button></div>}<div className="welcome-footer"><span className="tiny-orbit" /><span>Ideas in. Useful work out.</span><span>NEXUS AI</span></div></>}

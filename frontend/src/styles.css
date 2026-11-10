@@ -24,3 +24,5 @@
 .schedule-history{margin-top:9px;color:#b8c7e0;font-size:12px}.schedule-history summary{cursor:pointer;overflow-wrap:anywhere}.schedule-history ul{list-style:none;padding:0;margin:6px 0 0}.schedule-history li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:5px 0}.schedule-history li span{overflow-wrap:anywhere}.schedule-history .subtle{padding:4px 8px}
 
 .schedule-toggle{margin-top:7px;padding:4px 8px}
+
+.upload-citation{background:none;border:0;padding:0;font:inherit;cursor:pointer}.upload-citation:focus-visible,.upload-passage:focus{outline:2px solid #a5beff;outline-offset:3px;border-radius:3px}

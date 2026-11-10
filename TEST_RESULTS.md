@@ -1,6 +1,12 @@
 # NEXUS AI test results
 
-Updated: 8 November 2026, Asia/Kolkata. This report distinguishes deterministic mocked tests, real local AI/network calls, native Office checks and deployment preparation. Earlier observations below are retained as history.
+Updated: 10 November 2026, Asia/Kolkata. This report distinguishes deterministic mocked tests, real local AI/network calls, native Office checks and deployment preparation. Earlier observations below are retained as history.
+
+## 10 November: clickable upload citations
+
+**19 frontend tests and the TypeScript/Vite build passed.** A compiled Chromium run uploaded synthetic pilot notes, waited for the real local worker, and clicked `[U1]` and keyboard-activated `[U2]`. Each opened the existing evidence panel, scrolled to and focused its own passage, and showed text matching both the saved finding and the original upload. The keyboard check passed at 390px with no horizontal overflow or page errors. The test used the existing source-statement fallback with no model calls. Web citations and unmatched upload markers retain their prior behavior.
+
+Reproduce after building the frontend with `python -m scripts.qa_upload_citations`. Local evidence: `outputs/upload-citations-demo-20261110-192324/`.
 
 ## 8 November: pause and resume schedules
 
